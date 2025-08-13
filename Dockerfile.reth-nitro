@@ -1,10 +1,13 @@
 # syntax=docker/dockerfile:1.5
 
 FROM rust:1-bullseye AS reth-build
-WORKDIR /src/reth
-RUN apt-get update && apt-get install -y clang pkg-config libclang-dev cmake
-COPY ./../reth /src/reth
-RUN cargo build --release -p arb-reth
+WORKDIR /src
+RUN apt-get update && apt-get install -y clang pkg-config libclang-dev cmake git
+RUN git clone https://github.com/tiljrd/reth.git && \
+    cd reth && \
+    git fetch origin devin/1754808474-arb-reth-node && \
+    git checkout devin/1754808474-arb-reth-node && \
+    cargo build --release -p arb-reth
 
 FROM golang:1.22-bullseye AS nitro-build
 WORKDIR /src/nitro
