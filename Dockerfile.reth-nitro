@@ -1,0 +1,33 @@
+# syntax=docker/dockerfile:1.5
+
+FROM rust:1-bullseye AS reth-build
+WORKDIR /src
+RUN apt-get update && apt-get install -y clang pkg-config libclang-dev cmake git
+RUN git clone https://github.com/tiljrd/reth.git && \
+    cd reth && \
+    git fetch origin devin/1754808474-arb-reth-node && \
+    git checkout devin/1754808474-arb-reth-node && \
+    cargo build --release -p arb-reth
+
+FROM golang:1.22-bullseye AS nitro-build
+WORKDIR /src/nitro
+RUN apt-get update && apt-get install -y build-essential curl git clang pkg-config libclang-dev cmake llvm
+# Install rust nightly with rust-src for Stylus builds
+RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --default-toolchain nightly && \
+    /root/.cargo/bin/rustup component add rust-src
+ENV PATH="/root/.cargo/bin:${PATH}"
+ENV RUSTFLAGS="-Z build-std=std,panic_abort"
+COPY . /src/nitro
+RUN make build-prover-header build-prover-lib .make/cbrotli-lib || true
+RUN make contracts || true
+RUN go build -o /usr/local/bin/nitro ./cmd/nitro
+
+FROM debian:bullseye-slim AS runtime
+WORKDIR /app
+RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
+COPY --from=reth-build /src/reth/target/release/arb-reth /usr/local/bin/arb-reth
+COPY --from=nitro-build /usr/local/bin/nitro /usr/local/bin/nitro
+COPY docker/reth-nitro/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+EXPOSE 8545 8546 8551 9642
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

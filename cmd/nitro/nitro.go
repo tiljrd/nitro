@@ -70,6 +70,7 @@ import (
 	"github.com/offchainlabs/nitro/util/iostat"
 	"github.com/offchainlabs/nitro/util/rpcclient"
 	"github.com/offchainlabs/nitro/util/signature"
+	"github.com/offchainlabs/nitro/execution/rethexec"
 	"github.com/offchainlabs/nitro/validator/server_common"
 	"github.com/offchainlabs/nitro/validator/valnode"
 )
@@ -520,51 +521,93 @@ func mainImpl() int {
 		}
 	}
 
-	execNode, err := gethexec.CreateExecutionNode(
-		ctx,
-		stack,
-		chainDb,
-		l2BlockChain,
-		l1Client,
-		func() *gethexec.Config { return &liveNodeConfig.Get().Execution },
-		liveNodeConfig.Get().Node.TransactionStreamer.SyncTillBlock,
-	)
-	if err != nil {
-		log.Error("failed to create execution node", "err", err)
-		return 1
-	}
 	var wasmModuleRoot common.Hash
-	if liveNodeConfig.Get().Node.ValidatorRequired() {
-		locator, err := server_common.NewMachineLocator(liveNodeConfig.Get().Validation.Wasm.RootPath)
-		if err != nil {
-			log.Error("failed to create machine locator: %w", err)
-		}
-		wasmModuleRoot = locator.LatestWasmModuleRoot()
+	var currentNode *arbnode.Node
+
+	backend := strings.ToLower(liveNodeConfig.Get().ExecutionBackend)
+	if backend == "" {
+		backend = "geth"
 	}
 
-	currentNode, err := arbnode.CreateNodeFullExecutionClient(
-		ctx,
-		stack,
-		execNode,
-		execNode,
-		execNode,
-		execNode,
-		arbDb,
-		&NodeConfigFetcher{liveNodeConfig},
-		l2BlockChain.Config(),
-		l1Client,
-		&rollupAddrs,
-		l1TransactionOptsValidator,
-		l1TransactionOptsBatchPoster,
-		dataSigner,
-		fatalErrChan,
-		new(big.Int).SetUint64(nodeConfig.ParentChain.ID),
-		blobReader,
-		wasmModuleRoot,
-	)
-	if err != nil {
-		log.Error("failed to create node", "err", err)
-		return 1
+	if backend == "reth" {
+		rethClient, err := rethexec.NewRethExecutionClient(func() *rethexec.Config { return &liveNodeConfig.Get().Reth })
+		if err != nil {
+			log.Error("failed to create reth execution client", "err", err)
+			return 1
+		}
+		if liveNodeConfig.Get().Node.ValidatorRequired() {
+			locator, err := server_common.NewMachineLocator(liveNodeConfig.Get().Validation.Wasm.RootPath)
+			if err != nil {
+				log.Error("failed to create machine locator: %w", err)
+			}
+			wasmModuleRoot = locator.LatestWasmModuleRoot()
+		}
+		currentNode, err = arbnode.CreateNodeExecutionClient(
+			ctx,
+			stack,
+			rethClient,
+			arbDb,
+			&NodeConfigFetcher{liveNodeConfig},
+			l2BlockChain.Config(),
+			l1Client,
+			&rollupAddrs,
+			l1TransactionOptsValidator,
+			l1TransactionOptsBatchPoster,
+			dataSigner,
+			fatalErrChan,
+			new(big.Int).SetUint64(nodeConfig.ParentChain.ID),
+			blobReader,
+			wasmModuleRoot,
+		)
+		if err != nil {
+			log.Error("failed to create node (reth backend)", "err", err)
+			return 1
+		}
+	} else {
+		execNode, err := gethexec.CreateExecutionNode(
+			ctx,
+			stack,
+			chainDb,
+			l2BlockChain,
+			l1Client,
+			func() *gethexec.Config { return &liveNodeConfig.Get().Execution },
+			liveNodeConfig.Get().Node.TransactionStreamer.SyncTillBlock,
+		)
+		if err != nil {
+			log.Error("failed to create execution node", "err", err)
+			return 1
+		}
+		if liveNodeConfig.Get().Node.ValidatorRequired() {
+			locator, err := server_common.NewMachineLocator(liveNodeConfig.Get().Validation.Wasm.RootPath)
+			if err != nil {
+				log.Error("failed to create machine locator: %w", err)
+			}
+			wasmModuleRoot = locator.LatestWasmModuleRoot()
+		}
+		currentNode, err = arbnode.CreateNodeFullExecutionClient(
+			ctx,
+			stack,
+			execNode,
+			execNode,
+			execNode,
+			execNode,
+			arbDb,
+			&NodeConfigFetcher{liveNodeConfig},
+			l2BlockChain.Config(),
+			l1Client,
+			&rollupAddrs,
+			l1TransactionOptsValidator,
+			l1TransactionOptsBatchPoster,
+			dataSigner,
+			fatalErrChan,
+			new(big.Int).SetUint64(nodeConfig.ParentChain.ID),
+			blobReader,
+			wasmModuleRoot,
+		)
+		if err != nil {
+			log.Error("failed to create node", "err", err)
+			return 1
+		}
 	}
 
 	// Validate sequencer's MaxTxDataSize and batchPoster's MaxSize params.
@@ -740,6 +783,8 @@ type NodeConfig struct {
 	Conf                   genericconf.ConfConfig          `koanf:"conf" reload:"hot"`
 	Node                   arbnode.Config                  `koanf:"node" reload:"hot"`
 	Execution              gethexec.Config                 `koanf:"execution" reload:"hot"`
+	Reth                   rethexec.Config                 `koanf:"execution-reth" reload:"hot"`
+	ExecutionBackend       string                          `koanf:"execution-backend" reload:"hot"`
 	Validation             valnode.Config                  `koanf:"validation" reload:"hot"`
 	ParentChain            conf.ParentChainConfig          `koanf:"parent-chain" reload:"hot"`
 	Chain                  conf.L2Config                   `koanf:"chain"`
@@ -766,6 +811,8 @@ var NodeConfigDefault = NodeConfig{
 	Conf:                   genericconf.ConfConfigDefault,
 	Node:                   arbnode.ConfigDefault,
 	Execution:              gethexec.ConfigDefault,
+	Reth:                   rethexec.DefaultConfig,
+	ExecutionBackend:       "geth",
 	Validation:             valnode.DefaultValidationConfig,
 	ParentChain:            conf.L1ConfigDefault,
 	Chain:                  conf.L2ConfigDefault,
@@ -792,6 +839,8 @@ func NodeConfigAddOptions(f *flag.FlagSet) {
 	genericconf.ConfConfigAddOptions("conf", f)
 	arbnode.ConfigAddOptions("node", f, true, true)
 	gethexec.ConfigAddOptions("execution", f)
+	rethexec.ConfigAddOptions("execution-reth", f)
+	f.String("execution-backend", NodeConfigDefault.ExecutionBackend, "execution backend to use: geth or reth")
 	valnode.ValidationConfigAddOptions("validation", f)
 	conf.L1ConfigAddOptions("parent-chain", f)
 	conf.L2ConfigAddOptions("chain", f)
