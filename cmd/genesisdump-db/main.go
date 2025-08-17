@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	leveldb "github.com/ethereum/go-ethereum/ethdb/leveldb"
 	pebble "github.com/ethereum/go-ethereum/ethdb/pebble"
@@ -45,8 +46,22 @@ type SecureAccount struct {
 }
 
 type Dump struct {
-	Header       DumpHeader               `json:"header"`
-	SecureAlloc  map[string]SecureAccount `json:"secureAlloc,omitempty"`
+	Header      DumpHeader               `json:"header"`
+	SecureAlloc map[string]SecureAccount `json:"secureAlloc,omitempty"`
+	Alloc       map[string]SecureAccount `json:"alloc,omitempty"`
+}
+
+func hexToAddress(s string) common.Address {
+	b, _ := common.FromHex(s)
+	var out common.Address
+	if len(b) == 20 {
+		copy(out[:], b)
+	}
+	return out
+}
+
+func keccakAddress(addr common.Address) common.Hash {
+	return crypto.Keccak256Hash(addr[:])
 }
 
 func mustHexU64(v uint64) string {
@@ -118,7 +133,6 @@ func main() {
 			BaseFeePerGas: mustHexU256(header.BaseFee),
 			ExtraData:     fmt.Sprintf("0x%x", header.Extra),
 			Difficulty:    mustHexU256(header.Difficulty),
-			Number:        mustHexU64(header.Number.Uint64()),
 		},
 	}
 
@@ -133,7 +147,8 @@ func main() {
 			panic(err)
 		}
 		ni := trie.NewIterator(it)
-		alloc := make(map[string]SecureAccount)
+		secureAlloc := make(map[string]SecureAccount)
+		plainAlloc := make(map[string]SecureAccount)
 		accountCount := 0
 		for ni.Next() {
 			if len(ni.Value) == 0 {
@@ -143,7 +158,9 @@ func main() {
 			if err := rlp.DecodeBytes(ni.Value, &acc); err != nil {
 				panic(err)
 			}
+			hashedKey := common.BytesToHash(ni.Key)
 			keyHex := "0x" + common.Bytes2Hex(ni.Key)
+
 			sacc := SecureAccount{
 				Nonce:       mustHexU64(acc.Nonce),
 				Balance:     mustHexU256(acc.Balance.ToBig()),
@@ -156,44 +173,113 @@ func main() {
 					sacc.Code = "0x" + common.Bytes2Hex(code)
 				}
 			}
+
+			var storageSecure map[string]string
+			var storagePlain map[string]string
 			if acc.Root != (common.Hash{}) {
-				addrHash := common.BytesToHash(ni.Key) // hashed address key from secure trie
+				addrHash := hashedKey // hashed address key from secure trie
 				strie, err := trie.NewStateTrie(trie.StorageTrieID(header.Root, addrHash, acc.Root), tdb)
 				if err == nil {
 					sit, err := strie.NodeIterator(nil)
 					if err == nil {
 						siter := trie.NewIterator(sit)
-						storage := make(map[string]string)
+						storageSecure = make(map[string]string)
+						storagePlain = make(map[string]string)
 						stCnt := 0
 						for siter.Next() {
 							if len(siter.Value) == 0 {
 								continue
 							}
-							var val common.Hash
-							if err := rlp.DecodeBytes(siter.Value, &val); err != nil {
-								storage["0x"+common.Bytes2Hex(siter.Key)] = "0x" + common.Bytes2Hex(siter.Value)
+							var bi big.Int
+							valHex := ""
+							if err := rlp.DecodeBytes(siter.Value, &bi); err != nil {
+								valHex = "0x" + common.Bytes2Hex(siter.Value)
 							} else {
-								storage["0x"+common.Bytes2Hex(siter.Key)] = val.Hex()
+								valHex = fmt.Sprintf("0x%x", &bi)
+							}
+							secureKeyHex := "0x" + common.Bytes2Hex(siter.Key)
+							storageSecure[secureKeyHex] = valHex
+							slotPreimage := rawdb.ReadPreimage(db, common.BytesToHash(siter.Key))
+							if len(slotPreimage) == 32 {
+								storagePlain["0x"+common.Bytes2Hex(slotPreimage)] = valHex
 							}
 							stCnt++
 							if maxStorage > 0 && stCnt >= maxStorage {
 								break
 							}
 						}
-						if len(storage) > 0 {
-							sacc.Storage = storage
-						}
 					}
 				}
 			}
-			alloc[keyHex] = sacc
+			if len(storageSecure) > 0 {
+				sacc.Storage = storageSecure
+			}
+
+			secureAlloc[keyHex] = sacc
+
+			addrPreimage := rawdb.ReadPreimage(db, hashedKey)
+			if len(addrPreimage) == 20 {
+				pacc := sacc
+				if len(storagePlain) > 0 {
+					pacc.Storage = storagePlain
+				}
+				plainAlloc["0x"+common.Bytes2Hex(addrPreimage)] = pacc
+			}
+
 			accountCount++
 			if maxAccounts > 0 && accountCount >= maxAccounts {
 				break
 			}
 		}
-		if len(alloc) > 0 {
-			out.SecureAlloc = alloc
+		if len(secureAlloc) > 0 {
+			out.SecureAlloc = secureAlloc
+		}
+		if len(plainAlloc) > 0 {
+			out.Alloc = plainAlloc
+		}
+		if (out.Alloc == nil || len(out.Alloc) == 0) && len(out.SecureAlloc) > 0 {
+			candidates := []common.Address{
+				hexToAddress("0x0000000000000000000000000000000000000001"),
+				hexToAddress("0x0000000000000000000000000000000000000002"),
+				hexToAddress("0x0000000000000000000000000000000000000003"),
+				hexToAddress("0x0000000000000000000000000000000000000004"),
+				hexToAddress("0x0000000000000000000000000000000000000005"),
+				hexToAddress("0x0000000000000000000000000000000000000006"),
+				hexToAddress("0x0000000000000000000000000000000000000007"),
+				hexToAddress("0x0000000000000000000000000000000000000008"),
+				hexToAddress("0x0000000000000000000000000000000000000009"),
+				hexToAddress("0x000000000000000000000000000000000000000a"),
+				hexToAddress("0x000000000000000000000000000000000000000b"),
+				hexToAddress("0x000000000000000000000000000000000000000c"),
+				hexToAddress("0x000000000000000000000000000000000000000d"),
+				hexToAddress("0x000000000000000000000000000000000000000e"),
+				hexToAddress("0x000000000000000000000000000000000000000f"),
+				hexToAddress("0x0000000000000000000000000000000000000064"), // ArbSys
+				hexToAddress("0x000000000000000000000000000000000000006e"), // ArbRetryableTx
+				hexToAddress("0x0000000000000000000000000000000000000066"), // ArbAddressTable
+				hexToAddress("0x000000000000000000000000000000000000006c"), // ArbGasInfo
+				hexToAddress("0x0000000000000000000000000000000000000070"), // ArbOwner
+				hexToAddress("0x00000000000000000000000000000000000000c8"), // NodeInterface
+			}
+			hashToAddr := make(map[common.Hash]common.Address, len(candidates))
+			for _, a := range candidates {
+				if (a != common.Address{}) {
+					h := keccakAddress(a)
+					hashToAddr[h] = a
+				}
+			}
+			plainAlloc := make(map[string]SecureAccount)
+			mapped := 0
+			for k, v := range out.SecureAlloc {
+				h := common.HexToHash(k)
+				if addr, ok := hashToAddr[h]; ok {
+					plainAlloc[addr.Hex()] = v
+					mapped++
+				}
+			}
+			if len(plainAlloc) > 0 && mapped == len(out.SecureAlloc) {
+				out.Alloc = plainAlloc
+			}
 		}
 	}
 
