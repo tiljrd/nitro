@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/ethdb"
 	leveldb "github.com/ethereum/go-ethereum/ethdb/leveldb"
 	pebble "github.com/ethereum/go-ethereum/ethdb/pebble"
 )
@@ -54,11 +55,11 @@ func main() {
 	pebblePath := filepath.Join(base, "nitro", "l2chaindata")
 	gethPath := filepath.Join(base, "geth", "chaindata")
 
-	var db rawdb.DatabaseReader
+	var db ethdb.Database
 	var closeFn func()
 
 	if st, err := os.Stat(pebblePath); err == nil && st.IsDir() {
-		pdb, err := pebble.New(pebblePath, 2048, 2048, "", false)
+		pdb, err := pebble.New(pebblePath, 2048, 2048, "", false, false, nil)
 		if err != nil {
 			panic(err)
 		}
