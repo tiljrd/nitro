@@ -10,9 +10,12 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/ethdb"
 	leveldb "github.com/ethereum/go-ethereum/ethdb/leveldb"
 	pebble "github.com/ethereum/go-ethereum/ethdb/pebble"
+	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/ethereum/go-ethereum/trie"
 )
 
 type DumpHeader struct {
@@ -30,8 +33,18 @@ type DumpHeader struct {
 	Number        string `json:"number"`
 }
 
+type SecureAccount struct {
+	Nonce     string            `json:"nonce"`
+	Balance   string            `json:"balance"`
+	CodeHash  string            `json:"codeHash"`
+	StorageRoot string          `json:"storageRoot"`
+	Code      string            `json:"code,omitempty"`
+	Storage   map[string]string `json:"storage,omitempty"`
+}
+
 type Dump struct {
-	Header DumpHeader `json:"header"`
+	Header       DumpHeader               `json:"header"`
+	SecureAlloc  map[string]SecureAccount `json:"secureAlloc,omitempty"`
 }
 
 func mustHexU64(v uint64) string {
@@ -46,7 +59,13 @@ func mustHexU256(v *big.Int) string {
 
 func main() {
 	var base string
+	var dumpSecure bool
+	var maxAccounts int
+	var maxStorage int
 	flag.StringVar(&base, "chaindata", "", "path to L2 data root (e.g. ~/.arbitrum/sepolia-rollup)")
+	flag.BoolVar(&dumpSecure, "dump-secure-alloc", false, "dump secure alloc keyed by hashed addresses and storage keys")
+	flag.IntVar(&maxAccounts, "max-accounts", 0, "limit number of accounts to dump (0 = no limit)")
+	flag.IntVar(&maxStorage, "max-storage", 0, "limit number of storage slots per account (0 = no limit)")
 	flag.Parse()
 	if base == "" {
 		home, _ := os.UserHomeDir()
@@ -84,7 +103,7 @@ func main() {
 		panic("failed to read block 0")
 	}
 	header := block.Header()
-	d := Dump{
+	out := Dump{
 		Header: DumpHeader{
 			ParentHash:    header.ParentHash.Hex(),
 			Hash:          block.Hash().Hex(),
@@ -100,7 +119,76 @@ func main() {
 			Number:        mustHexU64(header.Number.Uint64()),
 		},
 	}
+
+	if dumpSecure {
+		trieDB := trie.NewDatabase(db)
+		st, err := trie.NewSecure(header.Root, trieDB)
+		if err != nil {
+			panic(err)
+		}
+		it := trie.NewIterator(st.NodeIterator(nil))
+		alloc := make(map[string]SecureAccount)
+		accountCount := 0
+		for it.Next() {
+			if len(it.Value) == 0 {
+				continue
+			}
+			var acc state.Account
+			if err := rlp.DecodeBytes(it.Value, &acc); err != nil {
+				panic(err)
+			}
+			keyHex := "0x" + common.Bytes2Hex(it.Key)
+			sacc := SecureAccount{
+				Nonce:       mustHexU64(acc.Nonce),
+				Balance:     mustHexU256(acc.Balance),
+				CodeHash:    common.BytesToHash(acc.CodeHash[:]).Hex(),
+				StorageRoot: common.BytesToHash(acc.Root[:]).Hex(),
+			}
+			if acc.CodeHash != (common.Hash{}) {
+				code := rawdb.ReadCode(db, common.BytesToHash(acc.CodeHash[:]))
+				if len(code) > 0 {
+					sacc.Code = "0x" + common.Bytes2Hex(code)
+				}
+			}
+			if acc.Root != (common.Hash{}) && acc.Root != (common.Hash{ // empty root
+			}) {
+				strie, err := trie.NewSecure(common.BytesToHash(acc.Root[:]), trieDB)
+				if err == nil {
+					sit := trie.NewIterator(strie.NodeIterator(nil))
+					storage := make(map[string]string)
+					stCnt := 0
+					for sit.Next() {
+						if len(sit.Value) == 0 {
+							continue
+						}
+						var val common.Hash
+						if err := rlp.DecodeBytes(sit.Value, &val); err != nil {
+							storage["0x"+common.Bytes2Hex(sit.Key)] = "0x" + common.Bytes2Hex(sit.Value)
+						} else {
+							storage["0x"+common.Bytes2Hex(sit.Key)] = val.Hex()
+						}
+						stCnt++
+						if maxStorage > 0 && stCnt >= maxStorage {
+							break
+						}
+					}
+					if len(storage) > 0 {
+						sacc.Storage = storage
+					}
+				}
+			}
+			alloc[keyHex] = sacc
+			accountCount++
+			if maxAccounts > 0 && accountCount >= maxAccounts {
+				break
+			}
+		}
+		if len(alloc) > 0 {
+			out.SecureAlloc = alloc
+		}
+	}
+
 	enc := json.NewEncoder(os.Stdout)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(d)
+	_ = enc.Encode(out)
 }
