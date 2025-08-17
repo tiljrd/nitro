@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	leveldb "github.com/ethereum/go-ethereum/ethdb/leveldb"
+	pebble "github.com/ethereum/go-ethereum/ethdb/pebble"
 )
 
 type DumpHeader struct {
@@ -43,20 +44,35 @@ func mustHexU256(v *big.Int) string {
 }
 
 func main() {
-	var chaindata string
-	flag.StringVar(&chaindata, "chaindata", "", "path to L2 chaindata directory (e.g. <nitro-data>/geth/chaindata)")
+	var base string
+	flag.StringVar(&base, "chaindata", "", "path to L2 data root (e.g. ~/.arbitrum/sepolia-rollup)")
 	flag.Parse()
-	if chaindata == "" {
+	if base == "" {
 		home, _ := os.UserHomeDir()
-		def := filepath.Join(home, ".arbitrum", "sepolia-rollup", "geth", "chaindata")
-		chaindata = def
+		base = filepath.Join(home, ".arbitrum", "sepolia-rollup")
 	}
-	ldb, err := leveldb.New(chaindata, 0, 0, "", false)
-	if err != nil {
-		panic(err)
+	pebblePath := filepath.Join(base, "nitro", "l2chaindata")
+	gethPath := filepath.Join(base, "geth", "chaindata")
+
+	var db rawdb.DatabaseReader
+	var closeFn func()
+
+	if st, err := os.Stat(pebblePath); err == nil && st.IsDir() {
+		pdb, err := pebble.New(pebblePath, 2048, 2048, "", false)
+		if err != nil {
+			panic(err)
+		}
+		db = rawdb.NewDatabase(pdb)
+		closeFn = func() { pdb.Close() }
+	} else {
+		ldb, err := leveldb.New(gethPath, 0, 0, "", false)
+		if err != nil {
+			panic(err)
+		}
+		db = rawdb.NewDatabase(ldb)
+		closeFn = func() { ldb.Close() }
 	}
-	defer ldb.Close()
-	db := rawdb.NewDatabase(ldb)
+	defer closeFn()
 
 	genHash := rawdb.ReadCanonicalHash(db, 0)
 	if genHash == (common.Hash{}) {
