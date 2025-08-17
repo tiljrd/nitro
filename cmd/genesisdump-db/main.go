@@ -52,7 +52,7 @@ type Dump struct {
 }
 
 func hexToAddress(s string) common.Address {
-	b, _ := common.FromHex(s)
+	b := common.FromHex(s)
 	var out common.Address
 	if len(b) == 20 {
 		copy(out[:], b)
@@ -235,37 +235,60 @@ func main() {
 			out.SecureAlloc = secureAlloc
 		}
 		if len(plainAlloc) > 0 {
+		if len(out.SecureAlloc) > 0 {
+			fmt.Fprintln(os.Stderr, "dbg: secureAlloc keys (first 5):")
+			i := 0
+			for k := range out.SecureAlloc {
+				fmt.Fprintln(os.Stderr, "  secureKey:", k)
+				i++
+				if i >= 5 {
+					break
+				}
+			}
+		}
+		fmt.Fprintln(os.Stderr, "dbg: candidate addr -> keccak(addr) (first few):")
+		sampleCandidates := []common.Address{
+			hexToAddress("0x0000000000000000000000000000000000000001"),
+			hexToAddress("0x0000000000000000000000000000000000000002"),
+			hexToAddress("0x0000000000000000000000000000000000000003"),
+			hexToAddress("0x0000000000000000000000000000000000000004"),
+			hexToAddress("0x0000000000000000000000000000000000000005"),
+			hexToAddress("0x0000000000000000000000000000000000000064"),
+			hexToAddress("0x0000000000000000000000000000000000000066"),
+			hexToAddress("0x000000000000000000000000000000000000006c"),
+			hexToAddress("0x000000000000000000000000000000000000006e"),
+			hexToAddress("0x0000000000000000000000000000000000000070"),
+			hexToAddress("0x00000000000000000000000000000000000000c8"),
+		}
+		for _, a := range sampleCandidates {
+			if (a != common.Address{}) {
+				fmt.Fprintln(os.Stderr, "  ", a.Hex(), "->", keccakAddress(a).Hex())
+			}
+		}
 			out.Alloc = plainAlloc
 		}
 		if (out.Alloc == nil || len(out.Alloc) == 0) && len(out.SecureAlloc) > 0 {
-			candidates := []common.Address{
-				hexToAddress("0x0000000000000000000000000000000000000001"),
-				hexToAddress("0x0000000000000000000000000000000000000002"),
-				hexToAddress("0x0000000000000000000000000000000000000003"),
-				hexToAddress("0x0000000000000000000000000000000000000004"),
-				hexToAddress("0x0000000000000000000000000000000000000005"),
-				hexToAddress("0x0000000000000000000000000000000000000006"),
-				hexToAddress("0x0000000000000000000000000000000000000007"),
-				hexToAddress("0x0000000000000000000000000000000000000008"),
-				hexToAddress("0x0000000000000000000000000000000000000009"),
-				hexToAddress("0x000000000000000000000000000000000000000a"),
-				hexToAddress("0x000000000000000000000000000000000000000b"),
-				hexToAddress("0x000000000000000000000000000000000000000c"),
-				hexToAddress("0x000000000000000000000000000000000000000d"),
-				hexToAddress("0x000000000000000000000000000000000000000e"),
-				hexToAddress("0x000000000000000000000000000000000000000f"),
-				hexToAddress("0x0000000000000000000000000000000000000064"), // ArbSys
-				hexToAddress("0x000000000000000000000000000000000000006e"), // ArbRetryableTx
-				hexToAddress("0x0000000000000000000000000000000000000066"), // ArbAddressTable
-				hexToAddress("0x000000000000000000000000000000000000006c"), // ArbGasInfo
-				hexToAddress("0x0000000000000000000000000000000000000070"), // ArbOwner
-				hexToAddress("0x00000000000000000000000000000000000000c8"), // NodeInterface
+			hashToAddr := make(map[common.Hash]common.Address, 256)
+			for i := 1; i <= 0xff; i++ {
+				addrBytes := make([]byte, 20)
+				addrBytes[19] = byte(i)
+				var a common.Address
+				copy(a[:], addrBytes)
+				h := keccakAddress(a)
+				hashToAddr[h] = a
 			}
-			hashToAddr := make(map[common.Hash]common.Address, len(candidates))
-			for _, a := range candidates {
+			for _, hexStr := range []string{
+				"0x0000000000000000000000000000000000000064",
+				"0x0000000000000000000000000000000000000065",
+				"0x0000000000000000000000000000000000000066",
+				"0x000000000000000000000000000000000000006c",
+				"0x000000000000000000000000000000000000006e",
+				"0x0000000000000000000000000000000000000070",
+				"0x00000000000000000000000000000000000000c8",
+			} {
+				a := hexToAddress(hexStr)
 				if (a != common.Address{}) {
-					h := keccakAddress(a)
-					hashToAddr[h] = a
+					hashToAddr[keccakAddress(a)] = a
 				}
 			}
 			plainAlloc := make(map[string]SecureAccount)
