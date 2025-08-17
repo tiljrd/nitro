@@ -235,58 +235,30 @@ func main() {
 			out.SecureAlloc = secureAlloc
 		}
 		if len(plainAlloc) > 0 {
-		if len(out.SecureAlloc) > 0 {
-			fmt.Fprintln(os.Stderr, "dbg: secureAlloc keys (first 5):")
-			i := 0
-			for k := range out.SecureAlloc {
-				fmt.Fprintln(os.Stderr, "  secureKey:", k)
-				i++
-				if i >= 5 {
-					break
-				}
-			}
-		}
-		fmt.Fprintln(os.Stderr, "dbg: candidate addr -> keccak(addr) (first few):")
-		sampleCandidates := []common.Address{
-			hexToAddress("0x0000000000000000000000000000000000000001"),
-			hexToAddress("0x0000000000000000000000000000000000000002"),
-			hexToAddress("0x0000000000000000000000000000000000000003"),
-			hexToAddress("0x0000000000000000000000000000000000000004"),
-			hexToAddress("0x0000000000000000000000000000000000000005"),
-			hexToAddress("0x0000000000000000000000000000000000000064"),
-			hexToAddress("0x0000000000000000000000000000000000000066"),
-			hexToAddress("0x000000000000000000000000000000000000006c"),
-			hexToAddress("0x000000000000000000000000000000000000006e"),
-			hexToAddress("0x0000000000000000000000000000000000000070"),
-			hexToAddress("0x00000000000000000000000000000000000000c8"),
-		}
-		for _, a := range sampleCandidates {
-			if (a != common.Address{}) {
-				fmt.Fprintln(os.Stderr, "  ", a.Hex(), "->", keccakAddress(a).Hex())
-			}
-		}
 			out.Alloc = plainAlloc
 		}
 		if (out.Alloc == nil || len(out.Alloc) == 0) && len(out.SecureAlloc) > 0 {
-			hashToAddr := make(map[common.Hash]common.Address, 256)
-			for i := 1; i <= 0xff; i++ {
-				addrBytes := make([]byte, 20)
-				addrBytes[19] = byte(i)
-				var a common.Address
-				copy(a[:], addrBytes)
-				h := keccakAddress(a)
-				hashToAddr[h] = a
+			candidatesHex := []string{
+				"0x0000000000000000000000000000000000000064", // ARB_SYS
+				"0x0000000000000000000000000000000000000065", // ARB_INFO
+				"0x0000000000000000000000000000000000000066", // ARB_ADDRESS_TABLE
+				"0x0000000000000000000000000000000000000067", // ARB_BLS
+				"0x0000000000000000000000000000000000000068", // ARB_FUNCTION_TABLE
+				"0x000000000000000000000000000000000000006b", // ARB_OWNER_PUBLIC
+				"0x000000000000000000000000000000000000006c", // ARB_GAS_INFO
+				"0x000000000000000000000000000000000000006e", // ARB_RETRYABLE_TX
+				"0x000000000000000000000000000000000000006f", // ARB_STATISTICS
+				"0x0000000000000000000000000000000000000070", // ARB_OWNER
+				"0x0000000000000000000000000000000000000071", // ARB_WASM
+				"0x0000000000000000000000000000000000000072", // ARB_WASM_CACHE
+				"0x0000000000000000000000000000000000000073", // ARB_NATIVE_TOKEN_MANAGER
+				"0x00000000000000000000000000000000000000c8", // NODE_INTERFACE
+				"0x00000000000000000000000000000000000000c9", // NODE_INTERFACE_DEBUG
+				"0x00000000000000000000000000000000000000ff", // ARB_DEBUG
 			}
-			for _, hexStr := range []string{
-				"0x0000000000000000000000000000000000000064",
-				"0x0000000000000000000000000000000000000065",
-				"0x0000000000000000000000000000000000000066",
-				"0x000000000000000000000000000000000000006c",
-				"0x000000000000000000000000000000000000006e",
-				"0x0000000000000000000000000000000000000070",
-				"0x00000000000000000000000000000000000000c8",
-			} {
-				a := hexToAddress(hexStr)
+			hashToAddr := make(map[common.Hash]common.Address, len(candidatesHex))
+			for _, hx := range candidatesHex {
+				a := hexToAddress(hx)
 				if (a != common.Address{}) {
 					hashToAddr[keccakAddress(a)] = a
 				}
@@ -298,7 +270,12 @@ func main() {
 				if addr, ok := hashToAddr[h]; ok {
 					plainAlloc[addr.Hex()] = v
 					mapped++
+				} else {
+					fmt.Fprintln(os.Stderr, "dbg: no candidate match for secure key", k)
 				}
+			}
+			for aHash, a := range hashToAddr {
+				fmt.Fprintln(os.Stderr, "dbg: candidate", a.Hex(), "->", aHash.Hex())
 			}
 			if len(plainAlloc) > 0 && mapped == len(out.SecureAlloc) {
 				out.Alloc = plainAlloc
