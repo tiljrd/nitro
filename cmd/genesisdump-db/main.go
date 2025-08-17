@@ -7,15 +7,17 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"bytes"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	leveldb "github.com/ethereum/go-ethereum/ethdb/leveldb"
 	pebble "github.com/ethereum/go-ethereum/ethdb/pebble"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/triedb"
 )
 
 type DumpHeader struct {
@@ -121,59 +123,66 @@ func main() {
 	}
 
 	if dumpSecure {
-		trieDB := trie.NewDatabase(db)
-		st, err := trie.NewSecure(header.Root, trieDB)
+		tdb := triedb.NewDatabase(db, nil)
+		atrie, err := trie.NewStateTrie(trie.StateTrieID(header.Root), tdb)
 		if err != nil {
 			panic(err)
 		}
-		it := trie.NewIterator(st.NodeIterator(nil))
+		it, err := atrie.NodeIterator(nil)
+		if err != nil {
+			panic(err)
+		}
+		ni := trie.NewIterator(it)
 		alloc := make(map[string]SecureAccount)
 		accountCount := 0
-		for it.Next() {
-			if len(it.Value) == 0 {
+		for ni.Next() {
+			if len(ni.Value) == 0 {
 				continue
 			}
-			var acc state.Account
-			if err := rlp.DecodeBytes(it.Value, &acc); err != nil {
+			var acc types.StateAccount
+			if err := rlp.DecodeBytes(ni.Value, &acc); err != nil {
 				panic(err)
 			}
-			keyHex := "0x" + common.Bytes2Hex(it.Key)
+			keyHex := "0x" + common.Bytes2Hex(ni.Key)
 			sacc := SecureAccount{
 				Nonce:       mustHexU64(acc.Nonce),
-				Balance:     mustHexU256(acc.Balance),
-				CodeHash:    common.BytesToHash(acc.CodeHash[:]).Hex(),
-				StorageRoot: common.BytesToHash(acc.Root[:]).Hex(),
+				Balance:     mustHexU256(acc.Balance.ToBig()),
+				CodeHash:    common.BytesToHash(acc.CodeHash).Hex(),
+				StorageRoot: acc.Root.Hex(),
 			}
-			if acc.CodeHash != (common.Hash{}) {
-				code := rawdb.ReadCode(db, common.BytesToHash(acc.CodeHash[:]))
+			if !bytes.Equal(acc.CodeHash, types.EmptyCodeHash[:]) {
+				code := rawdb.ReadCode(db, common.BytesToHash(acc.CodeHash))
 				if len(code) > 0 {
 					sacc.Code = "0x" + common.Bytes2Hex(code)
 				}
 			}
-			if acc.Root != (common.Hash{}) && acc.Root != (common.Hash{ // empty root
-			}) {
-				strie, err := trie.NewSecure(common.BytesToHash(acc.Root[:]), trieDB)
+			if acc.Root != (common.Hash{}) {
+				addrHash := common.BytesToHash(ni.Key) // hashed address key from secure trie
+				strie, err := trie.NewStateTrie(trie.StorageTrieID(header.Root, addrHash, acc.Root), tdb)
 				if err == nil {
-					sit := trie.NewIterator(strie.NodeIterator(nil))
-					storage := make(map[string]string)
-					stCnt := 0
-					for sit.Next() {
-						if len(sit.Value) == 0 {
-							continue
+					sit, err := strie.NodeIterator(nil)
+					if err == nil {
+						siter := trie.NewIterator(sit)
+						storage := make(map[string]string)
+						stCnt := 0
+						for siter.Next() {
+							if len(siter.Value) == 0 {
+								continue
+							}
+							var val common.Hash
+							if err := rlp.DecodeBytes(siter.Value, &val); err != nil {
+								storage["0x"+common.Bytes2Hex(siter.Key)] = "0x" + common.Bytes2Hex(siter.Value)
+							} else {
+								storage["0x"+common.Bytes2Hex(siter.Key)] = val.Hex()
+							}
+							stCnt++
+							if maxStorage > 0 && stCnt >= maxStorage {
+								break
+							}
 						}
-						var val common.Hash
-						if err := rlp.DecodeBytes(sit.Value, &val); err != nil {
-							storage["0x"+common.Bytes2Hex(sit.Key)] = "0x" + common.Bytes2Hex(sit.Value)
-						} else {
-							storage["0x"+common.Bytes2Hex(sit.Key)] = val.Hex()
+						if len(storage) > 0 {
+							sacc.Storage = storage
 						}
-						stCnt++
-						if maxStorage > 0 && stCnt >= maxStorage {
-							break
-						}
-					}
-					if len(storage) > 0 {
-						sacc.Storage = storage
 					}
 				}
 			}
