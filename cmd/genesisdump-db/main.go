@@ -10,6 +10,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	leveldb "github.com/ethereum/go-ethereum/ethdb/leveldb"
 )
 
 type DumpHeader struct {
@@ -50,11 +51,13 @@ func main() {
 		def := filepath.Join(home, ".arbitrum", "sepolia-rollup", "geth", "chaindata")
 		chaindata = def
 	}
-	db, err := rawdb.NewLevelDBDatabase(chaindata, 0, 0, "", true)
+	ldb, err := leveldb.New(chaindata, 0, 0, "", false)
 	if err != nil {
 		panic(err)
 	}
-	defer db.Close()
+	defer ldb.Close()
+	db := rawdb.NewDatabase(ldb)
+
 	genHash := rawdb.ReadCanonicalHash(db, 0)
 	if genHash == (common.Hash{}) {
 		panic("no canonical hash for block 0")
