@@ -1,8 +1,8 @@
 // Copyright 2023, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
-//go:build !wasm
-// +build !wasm
+//go:build !wasm && !nostylus
+// +build !wasm,!nostylus
 
 package programs
 
