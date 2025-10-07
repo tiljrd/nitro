@@ -76,7 +76,7 @@
     },
     {
       "title": "Validator",
-      "purpose": "Document all validation related components including staker, BOLD staker, stateless block validator and block validator",
+      "purpose": "Document all validation related components including staker, BOLD staker, stateless block validator and block validator and validator/",
       "parent": null
     },
     {
@@ -97,6 +97,11 @@
     {
       "title": "Block Validator",
       "purpose": "Document the Block Validator as found in staker/block_validator.go and how it interacts with BOLD and legacy staker.",
+      "parent": "Validator"
+    },
+    {
+      "title": "Prover (Arbitrator)",
+      "purpose": "Document the wasm prover in arbitrator/.",
       "parent": "Validator"
     },
     {
