@@ -41,3 +41,7 @@
 [submodule "contracts-local/src/precompiles"]
 	path = contracts-local/src/precompiles
 	url = https://github.com/OffchainLabs/nitro-precompile-interfaces.git
+[submodule "arbitrum-docs"]
+	path = arbitrum-docs
+	url = https://github.com/OffchainLabs/arbitrum-docs.git
+	branch = master
