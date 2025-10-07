@@ -1,0 +1,138 @@
+{
+  "repo_notes": [
+    {
+      "content": "This repository contains the entire implementation of Arbitrum Nitro, a second-generation Layer 2 blockchain protocol."
+    },
+    {
+      "content": "You should use docs and whitepapers / pdf documents as the general source of information on how the protocol works and the role of various components. You can find most docs in arbitrum-docs/ but also the whitepaper under docs/Nitro-whitepaper.pdf and more docs in bold/docs/."
+    },
+    {
+      "content": "Use cmd/chaininfo/arbitrum_chain_info.json for information about chains and contracts but docs take precedence. For example, the rollup address is correct in the docs but wrong in that file"
+    },
+    {
+      "content": "Ignore development and operations aspects and focus only on actual logic of the node"
+    }
+  ],
+  "pages": [
+    {
+      "title": "Overview",
+      "purpose": "Document the architecture of Arbitrum Nitro, how different components interact. Use all the other top-level pages as components and build connerctions. Also, provide information of what chains exist and their configuration.",
+      "parent": null
+    },
+    {
+      "title": "Contracts",
+      "purpose": "Document the contracts that exist in contracts/. It should include addresses on Arbitrum chains and document each contract, their interdependencies and their roles.",
+      "parent": null
+    },
+    {
+      "title": "Sequencer",
+      "purpose": "Document the sequencer as found in execution/gethexec/sequencer.go and explain references to other components.",
+      "parent": null
+    },
+    {
+      "title": "Batch Poster",
+      "purpose": "Detailed documentation about the batch poster as found in arbnode/batch_poster.go",
+      "parent": "Sequencer"
+    },
+    {
+      "title": "Delayed Sequencer",
+      "purpose": "Detailed documentation about the delayed sequencer as found in arbnode/delayed_sequencer.go.",
+      "parent": "Sequencer"
+    },
+    {
+      "title": "Execution Layer",
+      "purpose": "Detailed documentation of login-related UI components",
+      "parent": null
+    },
+    {
+      "title": "Geth",
+      "purpose": "Documents the Arbitrum-specific to Geth as found in go-ethereum/",
+      "parent": "Execution Layer"
+    },
+    {
+      "title": "Execution Client",
+      "purpose": "Documents the Execution Client from execution/interface.go which uses execution/gethexec/node.go",
+      "parent": "Execution Layer"
+    },
+    {
+      "title": "Execution Sequencer",
+      "purpose": "Documents the Execution Sequencer from execution/interface.go which uses execution/gethexec/node.go",
+      "parent": "Execution Layer"
+    },
+    {
+      "title": "Execution Recorder",
+      "purpose": "Documents the Execution Recorder from execution/interface.go which uses execution/gethexec/block_recorder.go",
+      "parent": "Execution Layer"
+    },
+    {
+      "title": "ArbOS",
+      "purpose": "Document ArbOS as found in arbos/",
+      "parent": null
+    },
+    {
+      "title": "Precompiles",
+      "purpose": "Document the precompiles as found in precompiles/",
+      "parent": "ArbOS"
+    },
+    {
+      "title": "Validator",
+      "purpose": "Document all validation related components including staker, BOLD staker, stateless block validator and block validator",
+      "parent": null
+    },
+    {
+      "title": "BOLD",
+      "purpose": "Document the BOLD protocol in detail based on bold/",
+      "parent": "Validator"
+    },
+    {
+      "title": "Legacy Staker",
+      "purpose": "Document the Legacy Staker as found in staker/legacy/staker.go.",
+      "parent": "Validator"
+    },
+    {
+      "title": "Block Validator",
+      "purpose": "Document the Block Validator as found in staker/block_validator.go and how it interacts with BOLD and legacy staker.",
+      "parent": "Validator"
+    },
+    {
+      "title": "Block Validator",
+      "purpose": "Document the Block Validator as found in staker/block_validator.go and how it interacts with BOLD and legacy staker.",
+      "parent": "Validator"
+    },
+    {
+      "title": "Transaction Streamer",
+      "purpose": "Document the Transaction Streamer as found in arbnode/transaction_streamer.go.",
+      "parent": null
+    },
+    {
+      "title": "Inbox Tracker",
+      "purpose": "Document the Inbox Tracker as found in arbnode/inbox_tracker.go.",
+      "parent": null
+    },
+    {
+      "title": "Inbox Reader",
+      "purpose": "Document the Inbox Reader as found in arbnode/inbox_reader.go.",
+      "parent": null
+    },
+    {
+      "title": "Broadcaster",
+      "purpose": "Document the Briadcaster as found in broadcaster/.",
+      "parent": null
+    },
+    {
+      "title": "Sync Monitor",
+      "purpose": "Document the Sync Monitor as found in arbnode/sync_monitor.go.",
+      "parent": null
+    },
+    {
+      "title": "Blob Reader",
+      "purpose": "Document the Blob Reader and DA Provider as found in daprovider/",
+      "parent": null
+    },
+    {
+      "title": "Message Pruner",
+      "purpose": "Document the Message Prune as found in arbnode/message_pruner.go",
+      "parent": null
+    }
+  ]
+}
