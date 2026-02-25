@@ -1,4 +1,4 @@
-// Copyright 2021-2022, Offchain Labs, Inc.
+// Copyright 2021-2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 package arbosState
@@ -13,6 +13,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
@@ -26,6 +27,7 @@ import (
 	"github.com/offchainlabs/nitro/arbos/blockhash"
 	"github.com/offchainlabs/nitro/arbos/burn"
 	"github.com/offchainlabs/nitro/arbos/features"
+	"github.com/offchainlabs/nitro/arbos/filteredTransactions"
 	"github.com/offchainlabs/nitro/arbos/l1pricing"
 	"github.com/offchainlabs/nitro/arbos/l2pricing"
 	"github.com/offchainlabs/nitro/arbos/merkleAccumulator"
@@ -43,28 +45,32 @@ import (
 // persisted beyond the end of the test.)
 
 type ArbosState struct {
-	arbosVersion           uint64                      // version of the ArbOS storage format and semantics
-	upgradeVersion         storage.StorageBackedUint64 // version we're planning to upgrade to, or 0 if not planning to upgrade
-	upgradeTimestamp       storage.StorageBackedUint64 // when to do the planned upgrade
-	networkFeeAccount      storage.StorageBackedAddress
-	l1PricingState         *l1pricing.L1PricingState
-	l2PricingState         *l2pricing.L2PricingState
-	retryableState         *retryables.RetryableState
-	addressTable           *addressTable.AddressTable
-	chainOwners            *addressSet.AddressSet
-	nativeTokenOwners      *addressSet.AddressSet
-	sendMerkle             *merkleAccumulator.MerkleAccumulator
-	programs               *programs.Programs
-	features               *features.Features
-	blockhashes            *blockhash.Blockhashes
-	chainId                storage.StorageBackedBigInt
-	chainConfig            storage.StorageBackedBytes
-	genesisBlockNum        storage.StorageBackedUint64
-	infraFeeAccount        storage.StorageBackedAddress
-	brotliCompressionLevel storage.StorageBackedUint64 // brotli compression level used for pricing
-	nativeTokenEnabledTime storage.StorageBackedUint64
-	backingStorage         *storage.Storage
-	Burner                 burn.Burner
+	arbosVersion                    uint64                      // version of the ArbOS storage format and semantics
+	upgradeVersion                  storage.StorageBackedUint64 // version we're planning to upgrade to, or 0 if not planning to upgrade
+	upgradeTimestamp                storage.StorageBackedUint64 // when to do the planned upgrade
+	networkFeeAccount               storage.StorageBackedAddress
+	l1PricingState                  *l1pricing.L1PricingState
+	l2PricingState                  *l2pricing.L2PricingState
+	retryableState                  *retryables.RetryableState
+	addressTable                    *addressTable.AddressTable
+	chainOwners                     *addressSet.AddressSet
+	nativeTokenOwners               *addressSet.AddressSet
+	transactionFilterers            *addressSet.AddressSet
+	filteredTransactions            *filteredTransactions.FilteredTransactionsState
+	sendMerkle                      *merkleAccumulator.MerkleAccumulator
+	programs                        *programs.Programs
+	features                        *features.Features
+	blockhashes                     *blockhash.Blockhashes
+	chainId                         storage.StorageBackedBigInt
+	chainConfig                     storage.StorageBackedBytes
+	genesisBlockNum                 storage.StorageBackedUint64
+	infraFeeAccount                 storage.StorageBackedAddress
+	brotliCompressionLevel          storage.StorageBackedUint64 // brotli compression level used for pricing
+	nativeTokenEnabledTime          storage.StorageBackedUint64
+	transactionFilteringEnabledTime storage.StorageBackedUint64
+	filteredFundsRecipient          storage.StorageBackedAddress
+	backingStorage                  *storage.Storage
+	Burner                          burn.Burner
 }
 
 var ErrUninitializedArbOS = errors.New("ArbOS uninitialized")
@@ -80,29 +86,40 @@ func OpenArbosState(stateDB vm.StateDB, burner burn.Burner) (*ArbosState, error)
 		return nil, ErrUninitializedArbOS
 	}
 	return &ArbosState{
-		arbosVersion:           arbosVersion,
-		upgradeVersion:         backingStorage.OpenStorageBackedUint64(uint64(upgradeVersionOffset)),
-		upgradeTimestamp:       backingStorage.OpenStorageBackedUint64(uint64(upgradeTimestampOffset)),
-		networkFeeAccount:      backingStorage.OpenStorageBackedAddress(uint64(networkFeeAccountOffset)),
-		l1PricingState:         l1pricing.OpenL1PricingState(backingStorage.OpenCachedSubStorage(l1PricingSubspace), arbosVersion),
-		l2PricingState:         l2pricing.OpenL2PricingState(backingStorage.OpenCachedSubStorage(l2PricingSubspace)),
-		retryableState:         retryables.OpenRetryableState(backingStorage.OpenCachedSubStorage(retryablesSubspace), stateDB),
-		addressTable:           addressTable.Open(backingStorage.OpenCachedSubStorage(addressTableSubspace)),
-		chainOwners:            addressSet.OpenAddressSet(backingStorage.OpenCachedSubStorage(chainOwnerSubspace)),
-		nativeTokenOwners:      addressSet.OpenAddressSet(backingStorage.OpenCachedSubStorage(nativeTokenOwnerSubspace)),
-		sendMerkle:             merkleAccumulator.OpenMerkleAccumulator(backingStorage.OpenCachedSubStorage(sendMerkleSubspace)),
-		programs:               programs.Open(arbosVersion, backingStorage.OpenSubStorage(programsSubspace)),
-		features:               features.Open(backingStorage.OpenSubStorage(featuresSubspace)),
-		blockhashes:            blockhash.OpenBlockhashes(backingStorage.OpenCachedSubStorage(blockhashesSubspace)),
-		chainId:                backingStorage.OpenStorageBackedBigInt(uint64(chainIdOffset)),
-		chainConfig:            backingStorage.OpenStorageBackedBytes(chainConfigSubspace),
-		genesisBlockNum:        backingStorage.OpenStorageBackedUint64(uint64(genesisBlockNumOffset)),
-		infraFeeAccount:        backingStorage.OpenStorageBackedAddress(uint64(infraFeeAccountOffset)),
-		brotliCompressionLevel: backingStorage.OpenStorageBackedUint64(uint64(brotliCompressionLevelOffset)),
-		nativeTokenEnabledTime: backingStorage.OpenStorageBackedUint64(uint64(nativeTokenEnabledFromTimeOffset)),
-		backingStorage:         backingStorage,
-		Burner:                 burner,
+		arbosVersion:                    arbosVersion,
+		upgradeVersion:                  backingStorage.OpenStorageBackedUint64(uint64(upgradeVersionOffset)),
+		upgradeTimestamp:                backingStorage.OpenStorageBackedUint64(uint64(upgradeTimestampOffset)),
+		networkFeeAccount:               backingStorage.OpenStorageBackedAddress(uint64(networkFeeAccountOffset)),
+		l1PricingState:                  l1pricing.OpenL1PricingState(backingStorage.OpenCachedSubStorage(l1PricingSubspace), arbosVersion),
+		l2PricingState:                  l2pricing.OpenL2PricingState(backingStorage.OpenCachedSubStorage(l2PricingSubspace), arbosVersion),
+		retryableState:                  retryables.OpenRetryableState(backingStorage.OpenCachedSubStorage(retryablesSubspace), stateDB),
+		addressTable:                    addressTable.Open(backingStorage.OpenCachedSubStorage(addressTableSubspace)),
+		chainOwners:                     addressSet.OpenAddressSet(backingStorage.OpenCachedSubStorage(chainOwnerSubspace)),
+		nativeTokenOwners:               addressSet.OpenAddressSet(backingStorage.OpenCachedSubStorage(nativeTokenOwnerSubspace)),
+		transactionFilterers:            addressSet.OpenAddressSet(backingStorage.OpenCachedSubStorage(transactionFiltererSubspace)),
+		filteredTransactions:            openFilteredTransactions(arbosVersion, stateDB, burner),
+		sendMerkle:                      merkleAccumulator.OpenMerkleAccumulator(backingStorage.OpenCachedSubStorage(sendMerkleSubspace)),
+		programs:                        programs.Open(arbosVersion, backingStorage.OpenSubStorage(programsSubspace)),
+		features:                        features.Open(backingStorage.OpenSubStorage(featuresSubspace)),
+		blockhashes:                     blockhash.OpenBlockhashes(backingStorage.OpenCachedSubStorage(blockhashesSubspace)),
+		chainId:                         backingStorage.OpenStorageBackedBigInt(uint64(chainIdOffset)),
+		chainConfig:                     backingStorage.OpenStorageBackedBytes(chainConfigSubspace),
+		genesisBlockNum:                 backingStorage.OpenStorageBackedUint64(uint64(genesisBlockNumOffset)),
+		infraFeeAccount:                 backingStorage.OpenStorageBackedAddress(uint64(infraFeeAccountOffset)),
+		brotliCompressionLevel:          backingStorage.OpenStorageBackedUint64(uint64(brotliCompressionLevelOffset)),
+		nativeTokenEnabledTime:          backingStorage.OpenStorageBackedUint64(uint64(nativeTokenEnabledFromTimeOffset)),
+		transactionFilteringEnabledTime: backingStorage.OpenStorageBackedUint64(uint64(transactionFilteringEnabledFromTimeOffset)),
+		filteredFundsRecipient:          backingStorage.OpenStorageBackedAddress(uint64(filteredFundsRecipientOffset)),
+		backingStorage:                  backingStorage,
+		Burner:                          burner,
 	}, nil
+}
+
+func openFilteredTransactions(arbosVersion uint64, stateDB vm.StateDB, burner burn.Burner) *filteredTransactions.FilteredTransactionsState {
+	if arbosVersion >= params.ArbosVersion_TransactionFiltering {
+		return filteredTransactions.Open(stateDB, burner)
+	}
+	return nil
 }
 
 func OpenSystemArbosState(stateDB vm.StateDB, tracingInfo *util.TracingInfo, readOnly bool) (*ArbosState, error) {
@@ -171,22 +188,25 @@ const (
 	infraFeeAccountOffset
 	brotliCompressionLevelOffset
 	nativeTokenEnabledFromTimeOffset
+	transactionFilteringEnabledFromTimeOffset
+	filteredFundsRecipientOffset
 )
 
 type SubspaceID []byte
 
 var (
-	l1PricingSubspace        SubspaceID = []byte{0}
-	l2PricingSubspace        SubspaceID = []byte{1}
-	retryablesSubspace       SubspaceID = []byte{2}
-	addressTableSubspace     SubspaceID = []byte{3}
-	chainOwnerSubspace       SubspaceID = []byte{4}
-	sendMerkleSubspace       SubspaceID = []byte{5}
-	blockhashesSubspace      SubspaceID = []byte{6}
-	chainConfigSubspace      SubspaceID = []byte{7}
-	programsSubspace         SubspaceID = []byte{8}
-	featuresSubspace         SubspaceID = []byte{9}
-	nativeTokenOwnerSubspace SubspaceID = []byte{10}
+	l1PricingSubspace           SubspaceID = []byte{0}
+	l2PricingSubspace           SubspaceID = []byte{1}
+	retryablesSubspace          SubspaceID = []byte{2}
+	addressTableSubspace        SubspaceID = []byte{3}
+	chainOwnerSubspace          SubspaceID = []byte{4}
+	sendMerkleSubspace          SubspaceID = []byte{5}
+	blockhashesSubspace         SubspaceID = []byte{6}
+	chainConfigSubspace         SubspaceID = []byte{7}
+	programsSubspace            SubspaceID = []byte{8}
+	featuresSubspace            SubspaceID = []byte{9}
+	nativeTokenOwnerSubspace    SubspaceID = []byte{10}
+	transactionFiltererSubspace SubspaceID = []byte{11}
 )
 
 var PrecompileMinArbOSVersions = make(map[common.Address]uint64)
@@ -229,37 +249,100 @@ func InitializeArbosState(stateDB vm.StateDB, burner burn.Burner, chainConfig *p
 		return nil, err
 	}
 
-	_ = sto.SetUint64ByUint64(uint64(versionOffset), 1) // initialize to version 1; upgrade at end of this func if needed
-	_ = sto.SetUint64ByUint64(uint64(upgradeVersionOffset), 0)
-	_ = sto.SetUint64ByUint64(uint64(upgradeTimestampOffset), 0)
-	if desiredArbosVersion >= params.ArbosVersion_2 {
-		_ = sto.SetByUint64(uint64(networkFeeAccountOffset), util.AddressToHash(initialChainOwner))
-	} else {
-		_ = sto.SetByUint64(uint64(networkFeeAccountOffset), common.Hash{}) // the 0 address until an owner sets it
+	transactionFilteringEnabledFromTime := uint64(0)
+	if genesisArbOSInit != nil && genesisArbOSInit.TransactionFilteringEnabled {
+		// Same logic as for native token management above
+		transactionFilteringEnabledFromTime = uint64(1)
 	}
-	_ = sto.SetByUint64(uint64(chainIdOffset), common.BigToHash(chainConfig.ChainID))
+	err = sto.SetUint64ByUint64(uint64(transactionFilteringEnabledFromTimeOffset), transactionFilteringEnabledFromTime)
+	if err != nil {
+		return nil, err
+	}
+
+	err = sto.SetUint64ByUint64(uint64(versionOffset), 1) // initialize to version 1; upgrade at end of this func if needed
+	if err != nil {
+		return nil, err
+	}
+	err = sto.SetUint64ByUint64(uint64(upgradeVersionOffset), 0)
+	if err != nil {
+		return nil, err
+	}
+	err = sto.SetUint64ByUint64(uint64(upgradeTimestampOffset), 0)
+	if err != nil {
+		return nil, err
+	}
+
+	if desiredArbosVersion >= params.ArbosVersion_2 {
+		err = sto.SetByUint64(uint64(networkFeeAccountOffset), util.AddressToHash(initialChainOwner))
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		err = sto.SetByUint64(uint64(networkFeeAccountOffset), common.Hash{}) // the 0 address until an owner sets it
+		if err != nil {
+			return nil, err
+		}
+	}
+	err = sto.SetByUint64(uint64(chainIdOffset), common.BigToHash(chainConfig.ChainID))
+	if err != nil {
+		return nil, err
+	}
+
 	chainConfigStorage := sto.OpenStorageBackedBytes(chainConfigSubspace)
-	_ = chainConfigStorage.Set(initMessage.SerializedChainConfig)
-	_ = sto.SetUint64ByUint64(uint64(genesisBlockNumOffset), chainConfig.ArbitrumChainParams.GenesisBlockNum)
-	_ = sto.SetUint64ByUint64(uint64(brotliCompressionLevelOffset), 0) // default brotliCompressionLevel for fast compression is 0
+	err = chainConfigStorage.Set(initMessage.SerializedChainConfig)
+	if err != nil {
+		return nil, err
+	}
+	err = sto.SetUint64ByUint64(uint64(genesisBlockNumOffset), chainConfig.ArbitrumChainParams.GenesisBlockNum)
+	if err != nil {
+		return nil, err
+	}
+	err = sto.SetUint64ByUint64(uint64(brotliCompressionLevelOffset), 0) // default brotliCompressionLevel for fast compression is 0
+	if err != nil {
+		return nil, err
+	}
 
 	initialRewardsRecipient := l1pricing.BatchPosterAddress
 	if desiredArbosVersion >= params.ArbosVersion_2 {
 		initialRewardsRecipient = initialChainOwner
 	}
-	_ = l1pricing.InitializeL1PricingState(sto.OpenCachedSubStorage(l1PricingSubspace), initialRewardsRecipient, initMessage.InitialL1BaseFee)
-	_ = l2pricing.InitializeL2PricingState(sto.OpenCachedSubStorage(l2PricingSubspace))
-	_ = retryables.InitializeRetryableState(sto.OpenCachedSubStorage(retryablesSubspace))
+	err = l1pricing.InitializeL1PricingState(sto.OpenCachedSubStorage(l1PricingSubspace), initialRewardsRecipient, initMessage.InitialL1BaseFee)
+	if err != nil {
+		return nil, err
+	}
+	err = l2pricing.InitializeL2PricingState(sto.OpenCachedSubStorage(l2PricingSubspace))
+	if err != nil {
+		return nil, err
+	}
+	err = retryables.InitializeRetryableState(sto.OpenCachedSubStorage(retryablesSubspace))
+	if err != nil {
+		return nil, err
+	}
 	addressTable.Initialize(sto.OpenCachedSubStorage(addressTableSubspace))
 	merkleAccumulator.InitializeMerkleAccumulator(sto.OpenCachedSubStorage(sendMerkleSubspace))
 	blockhash.InitializeBlockhashes(sto.OpenCachedSubStorage(blockhashesSubspace))
 
 	ownersStorage := sto.OpenCachedSubStorage(chainOwnerSubspace)
-	_ = addressSet.Initialize(ownersStorage)
-	_ = addressSet.OpenAddressSet(ownersStorage).Add(initialChainOwner)
+	err = addressSet.Initialize(ownersStorage)
+	if err != nil {
+		return nil, err
+	}
+	err = addressSet.OpenAddressSet(ownersStorage).Add(initialChainOwner)
+	if err != nil {
+		return nil, err
+	}
 
 	nativeTokenOwnersStorage := sto.OpenCachedSubStorage(nativeTokenOwnerSubspace)
-	_ = addressSet.Initialize(nativeTokenOwnersStorage)
+	err = addressSet.Initialize(nativeTokenOwnersStorage)
+	if err != nil {
+		return nil, err
+	}
+
+	transactionFiltererStorage := sto.OpenCachedSubStorage(transactionFiltererSubspace)
+	err = addressSet.Initialize(transactionFiltererStorage)
+	if err != nil {
+		return nil, err
+	}
 
 	aState, err := OpenArbosState(stateDB, burner)
 	if err != nil {
@@ -323,7 +406,7 @@ func (state *ArbosState) UpgradeArbosVersion(
 			// no state changes needed
 		case params.ArbosVersion_10:
 			ensure(state.l1PricingState.SetL1FeesAvailable(stateDB.GetBalance(
-				l1pricing.L1PricerFundsPoolAddress,
+				types.L1PricerFundsPoolAddress,
 			).ToBig()))
 
 		case params.ArbosVersion_11:
@@ -391,6 +474,24 @@ func (state *ArbosState) UpgradeArbosVersion(
 			ensure(p.UpgradeToArbosVersion(nextArbosVersion))
 			ensure(p.Save())
 			ensure(state.l2PricingState.SetMaxPerTxGasLimit(l2pricing.InitialPerTxGasLimitV50))
+
+		case params.ArbosVersion_51:
+			// nothing
+
+		case 52, 53, 54, 55, 56, 57, 58, 59:
+			// these versions are left to Orbit chains for custom upgrades.
+
+		case params.ArbosVersion_60:
+			// Changes for ArbosVersion_StylusContractLimit
+			p, err := state.Programs().Params()
+			ensure(err)
+			ensure(p.UpgradeToArbosVersion(nextArbosVersion))
+			ensure(p.Save())
+			// Changes for ArbosVersion_TransactionFiltering
+			ensure(addressSet.Initialize(state.backingStorage.OpenSubStorage(transactionFiltererSubspace)))
+			// filteredFundsRecipient defaults to zero address (falls back to networkFeeAccount).
+			// No explicit initialization needed -- uninitialized storage reads as zero.
+
 		default:
 			return fmt.Errorf(
 				"the chain is upgrading to unsupported ArbOS version %v, %w",
@@ -409,6 +510,7 @@ func (state *ArbosState) UpgradeArbosVersion(
 		state.arbosVersion = nextArbosVersion
 		state.programs.ArbosVersion = nextArbosVersion
 		state.l1PricingState.ArbosVersion = nextArbosVersion
+		state.l2PricingState.ArbosVersion = nextArbosVersion
 	}
 
 	if firstTime && upgradeTo >= params.ArbosVersion_6 {
@@ -505,6 +607,22 @@ func (state *ArbosState) NativeTokenOwners() *addressSet.AddressSet {
 	return state.nativeTokenOwners
 }
 
+func (state *ArbosState) TransactionFilteringFromTime() (uint64, error) {
+	return state.transactionFilteringEnabledTime.Get()
+}
+
+func (state *ArbosState) SetTransactionFilteringFromTime(val uint64) error {
+	return state.transactionFilteringEnabledTime.Set(val)
+}
+
+func (state *ArbosState) TransactionFilterers() *addressSet.AddressSet {
+	return state.transactionFilterers
+}
+
+func (state *ArbosState) FilteredTransactions() *filteredTransactions.FilteredTransactionsState {
+	return state.filteredTransactions
+}
+
 func (state *ArbosState) SendMerkleAccumulator() *merkleAccumulator.MerkleAccumulator {
 	if state.sendMerkle == nil {
 		state.sendMerkle = merkleAccumulator.OpenMerkleAccumulator(state.backingStorage.OpenCachedSubStorage(sendMerkleSubspace))
@@ -540,6 +658,25 @@ func (state *ArbosState) SetInfraFeeAccount(account common.Address) error {
 	return state.infraFeeAccount.Set(account)
 }
 
+func (state *ArbosState) FilteredFundsRecipient() (common.Address, error) {
+	return state.filteredFundsRecipient.Get()
+}
+
+func (state *ArbosState) SetFilteredFundsRecipient(account common.Address) error {
+	return state.filteredFundsRecipient.Set(account)
+}
+
+func (state *ArbosState) FilteredFundsRecipientOrDefault() (common.Address, error) {
+	recipient, err := state.filteredFundsRecipient.Get()
+	if err != nil {
+		return common.Address{}, err
+	}
+	if recipient == (common.Address{}) {
+		return state.networkFeeAccount.Get()
+	}
+	return recipient, nil
+}
+
 func (state *ArbosState) Keccak(data ...[]byte) ([]byte, error) {
 	return state.backingStorage.Keccak(data...)
 }
@@ -562,4 +699,12 @@ func (state *ArbosState) SetChainConfig(serializedChainConfig []byte) error {
 
 func (state *ArbosState) GenesisBlockNum() (uint64, error) {
 	return state.genesisBlockNum.Get()
+}
+
+func (state *ArbosState) NativeTokenEnabledTimeHandle() storage.StorageBackedUint64 {
+	return state.nativeTokenEnabledTime
+}
+
+func (state *ArbosState) TransactionFilteringEnabledTimeHandle() storage.StorageBackedUint64 {
+	return state.transactionFilteringEnabledTime
 }

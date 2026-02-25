@@ -1,4 +1,4 @@
-// Copyright 2021-2024, Offchain Labs, Inc.
+// Copyright 2021-2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 package precompiles
@@ -535,6 +535,10 @@ func Precompiles() map[addr]ArbosPrecompile {
 	ArbGasInfo.methodsByName["GetL1PricingUnitsSinceUpdate"].arbosVersion = params.ArbosVersion_20
 	ArbGasInfo.methodsByName["GetLastL1PricingSurplus"].arbosVersion = params.ArbosVersion_20
 	ArbGasInfo.methodsByName["GetMaxTxGasLimit"].arbosVersion = params.ArbosVersion_50
+	ArbGasInfo.methodsByName["GetMaxBlockGasLimit"].arbosVersion = params.ArbosVersion_50
+	ArbGasInfo.methodsByName["GetGasPricingConstraints"].arbosVersion = params.ArbosVersion_50
+	ArbGasInfo.methodsByName["GetMultiGasPricingConstraints"].arbosVersion = params.ArbosVersion_60
+	ArbGasInfo.methodsByName["GetMultiGasBaseFee"].arbosVersion = params.ArbosVersion_60
 	insert(MakePrecompile(precompilesgen.ArbAggregatorMetaData, &ArbAggregator{Address: types.ArbAggregatorAddress}))
 	insert(MakePrecompile(precompilesgen.ArbStatisticsMetaData, &ArbStatistics{Address: types.ArbStatisticsAddress}))
 
@@ -557,6 +561,7 @@ func Precompiles() map[addr]ArbosPrecompile {
 	ArbOwnerPublic.methodsByName["IsNativeTokenOwner"].arbosVersion = params.ArbosVersion_41
 	ArbOwnerPublic.methodsByName["GetAllNativeTokenOwners"].arbosVersion = params.ArbosVersion_41
 	ArbOwnerPublic.methodsByName["GetParentGasFloorPerToken"].arbosVersion = params.ArbosVersion_50
+	ArbOwnerPublic.methodsByName["GetMaxStylusContractFragments"].arbosVersion = params.ArbosVersion_StylusContractLimit
 
 	ArbWasmImpl := &ArbWasm{Address: types.ArbWasmAddress}
 	ArbWasm := insert(MakePrecompile(precompilesgen.ArbWasmMetaData, ArbWasmImpl))
@@ -615,6 +620,10 @@ func Precompiles() map[addr]ArbosPrecompile {
 	ArbOwner.methodsByName["ReleaseL1PricerSurplusFunds"].arbosVersion = params.ArbosVersion_10
 	ArbOwner.methodsByName["SetChainConfig"].arbosVersion = params.ArbosVersion_11
 	ArbOwner.methodsByName["SetBrotliCompressionLevel"].arbosVersion = params.ArbosVersion_20
+	ArbOwner.methodsByName["SetGasPricingConstraints"].arbosVersion = params.ArbosVersion_50
+	ArbOwner.methodsByName["SetGasBacklog"].arbosVersion = params.ArbosVersion_50
+	ArbOwner.methodsByName["SetMultiGasPricingConstraints"].arbosVersion = params.ArbosVersion_60
+	ArbOwner.methodsByName["SetMaxStylusContractFragments"].arbosVersion = params.ArbosVersion_60
 	stylusMethods := []string{
 		"SetInkPrice", "SetWasmMaxStackDepth", "SetWasmFreePages", "SetWasmPageGas",
 		"SetWasmPageLimit", "SetWasmMinInitGas", "SetWasmInitCostScalar",
@@ -647,13 +656,37 @@ func Precompiles() map[addr]ArbosPrecompile {
 	ArbOwner.methodsByName["GetAllNativeTokenOwners"].arbosVersion = params.ArbosVersion_41
 	ArbOwner.methodsByName["SetParentGasFloorPerToken"].arbosVersion = params.ArbosVersion_50
 	ArbOwner.methodsByName["SetMaxBlockGasLimit"].arbosVersion = params.ArbosVersion_50
+	ArbOwner.methodsByName["SetMaxStylusContractFragments"].arbosVersion = params.ArbosVersion_StylusContractLimit
+
+	ArbOwner.methodsByName["AddTransactionFilterer"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbOwner.methodsByName["RemoveTransactionFilterer"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbOwner.methodsByName["IsTransactionFilterer"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbOwner.methodsByName["GetAllTransactionFilterers"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbOwner.methodsByName["SetTransactionFilteringFrom"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbOwner.methodsByName["SetFilteredFundsRecipient"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbOwner.methodsByName["GetFilteredFundsRecipient"].arbosVersion = params.ArbosVersion_TransactionFiltering
 
 	ArbOwnerPublic.methodsByName["GetNativeTokenManagementFrom"].arbosVersion = params.ArbosVersion_50
+
+	ArbOwnerPublic.methodsByName["GetTransactionFilteringFrom"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbOwnerPublic.methodsByName["IsTransactionFilterer"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbOwnerPublic.methodsByName["GetAllTransactionFilterers"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbOwnerPublic.methodsByName["GetFilteredFundsRecipient"].arbosVersion = params.ArbosVersion_TransactionFiltering
 
 	ArbNativeTokenManager := insert(MakePrecompile(precompilesgen.ArbNativeTokenManagerMetaData, &ArbNativeTokenManager{Address: types.ArbNativeTokenManagerAddress}))
 	ArbNativeTokenManager.arbosVersion = params.ArbosVersion_41
 	ArbNativeTokenManager.methodsByName["MintNativeToken"].arbosVersion = params.ArbosVersion_41
 	ArbNativeTokenManager.methodsByName["BurnNativeToken"].arbosVersion = params.ArbosVersion_41
+
+	ArbFilteredTransactionsManagerImpl := &ArbFilteredTransactionsManager{Address: types.ArbFilteredTransactionsManagerAddress}
+
+	_, ArbFilteredTransactionsManager := MakePrecompile(precompilesgen.ArbFilteredTransactionsManagerMetaData, &ArbFilteredTransactionsManager{Address: types.ArbFilteredTransactionsManagerAddress})
+	ArbFilteredTransactionsManager.arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbFilteredTransactionsManager.methodsByName["AddFilteredTransaction"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbFilteredTransactionsManager.methodsByName["DeleteFilteredTransaction"].arbosVersion = params.ArbosVersion_TransactionFiltering
+	ArbFilteredTransactionsManager.methodsByName["IsTransactionFiltered"].arbosVersion = params.ArbosVersion_TransactionFiltering
+
+	insert(filtererOnly(ArbFilteredTransactionsManagerImpl.Address, ArbFilteredTransactionsManager))
 
 	// this should be executed after all precompiles have been inserted
 	for _, contract := range contracts {

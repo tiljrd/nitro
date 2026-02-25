@@ -10,12 +10,16 @@ check_missing_value() {
 timeout=""
 tags=""
 run=""
+skip=""
 test_state_scheme=""
+test_database_engine=""
 junitfile=""
 log=true
 race=false
 cover=false
+consensus_execution_in_same_process_use_rpc=false
 flaky=false
+reduce_parallelism=false
 while [[ $# -gt 0 ]]; do
   case $1 in
     --timeout)
@@ -36,10 +40,22 @@ while [[ $# -gt 0 ]]; do
       run=$1
       shift
       ;;
+    --skip)
+      shift
+      check_missing_value $# "$1" "--skip"
+      skip=$1
+      shift
+      ;;
     --test_state_scheme)
       shift
       check_missing_value $# "$1" "--test_state_scheme"
       test_state_scheme=$1
+      shift
+      ;;
+    --test_database_engine)
+      shift
+      check_missing_value $# "$1" "--test_database_engine"
+      test_database_engine=$1
       shift
       ;;
     --race)
@@ -48,6 +64,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --cover)
       cover=true
+      shift
+      ;;
+    --consensus_execution_in_same_process_use_rpc)
+     consensus_execution_in_same_process_use_rpc=true
       shift
       ;;
     --nolog)
@@ -62,6 +82,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --flaky)
       flaky=true
+      shift
+      ;;
+    --reduce-parallelism)
+      reduce_parallelism=true
       shift
       ;;
     *)
@@ -98,10 +122,14 @@ if [ "$tags" != "" ]; then
 fi
 
 if [ "$run" != "" ]; then
-  cmd="$cmd -run=$run"
+  cmd="$cmd -run=\"$run\""
 fi
 
-if [ "$flaky" == false ]; then
+if [ "$skip" != "" ] && [ "$flaky" == false ]; then
+  cmd="$cmd -skip=\"$skip|Flaky\""
+elif [ "$skip" != "" ]; then
+  cmd="$cmd -skip=\"$skip\""
+elif [ "$flaky" == false ]; then
   cmd="$cmd -skip=Flaky"
 fi
 
@@ -113,10 +141,22 @@ if [ "$cover" == true ]; then
   cmd="$cmd -coverprofile=coverage.txt -covermode=atomic -coverpkg=./...,./go-ethereum/..."
 fi
 
+if [ "$reduce_parallelism" == true ]; then
+  cmd="$cmd -p 1 -parallel $(( $(nproc) > 4 ? $(nproc) / 4 : 1 ))"
+fi
+
 if [ "$test_state_scheme" != "" ]; then
     cmd="$cmd -args -- --test_state_scheme=$test_state_scheme --test_loglevel=8"
 else
     cmd="$cmd -args -- --test_loglevel=8" # Use error log level, which is the value 8 in the slog level enum for tests.
+fi
+
+if [ "$consensus_execution_in_same_process_use_rpc" == true ]; then
+    cmd="$cmd --consensus_execution_in_same_process_use_rpc=true"
+fi
+
+if [ "$test_database_engine" != "" ]; then
+    cmd="$cmd --test_database_engine=$test_database_engine"
 fi
 
 if [ "$log" == true ]; then

@@ -1,4 +1,4 @@
-// Copyright 2021-2022, Offchain Labs, Inc.
+// Copyright 2021-2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 package arbtest
@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/andybalholm/brotli"
+	"github.com/stretchr/testify/require"
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -136,7 +137,7 @@ func testBatchPosterParallel(t *testing.T, useRedis bool, useRedisLock bool) {
 	Require(t, err)
 	seqTxOpts := builder.L1Info.GetDefaultTransactOpts("Sequencer", ctx)
 	builder.nodeConfig.BatchPoster.Enable = true
-	builder.nodeConfig.BatchPoster.MaxSize = len(firstTxData) * 2
+	builder.nodeConfig.BatchPoster.MaxCalldataBatchSize = len(firstTxData) * 2
 	startL1Block, err := builder.L1.Client.BlockNumber(ctx)
 	Require(t, err)
 	parentChainID, err := builder.L1.Client.ChainID(ctx)
@@ -157,8 +158,9 @@ func testBatchPosterParallel(t *testing.T, useRedis bool, useRedisLock bool) {
 				Config:        func() *arbnode.BatchPosterConfig { return &batchPosterConfig },
 				DeployInfo:    builder.L2.ConsensusNode.DeployInfo,
 				TransactOpts:  &seqTxOpts,
-				DAPWriter:     nil,
+				DAPWriters:    nil,
 				ParentChainID: parentChainID,
+				ChainConfig:   builder.chainConfig,
 			},
 		)
 		Require(t, err)
@@ -277,7 +279,7 @@ func TestRedisBatchPosterHandoff(t *testing.T) {
 	Require(t, err)
 	seqTxOpts := builder.L1Info.GetDefaultTransactOpts("Sequencer", ctx)
 	builder.nodeConfig.BatchPoster.Enable = true
-	builder.nodeConfig.BatchPoster.MaxSize = len(firstTxData) * 2
+	builder.nodeConfig.BatchPoster.MaxCalldataBatchSize = len(firstTxData) * 2
 	parentChainID, err := builder.L1.Client.ChainID(ctx)
 	if err != nil {
 		t.Fatalf("Failed to get parent chain id: %v", err)
@@ -297,8 +299,9 @@ func TestRedisBatchPosterHandoff(t *testing.T) {
 				Config:        func() *arbnode.BatchPosterConfig { return &batchPosterConfig },
 				DeployInfo:    builder.L2.ConsensusNode.DeployInfo,
 				TransactOpts:  &seqTxOpts,
-				DAPWriter:     nil,
+				DAPWriters:    nil,
 				ParentChainID: parentChainID,
+				ChainConfig:   builder.chainConfig,
 			},
 		)
 		Require(t, err)
@@ -440,7 +443,7 @@ func testAllowPostingFirstBatchWhenSequencerMessageCountMismatch(t *testing.T, e
 	defer cancel()
 
 	// creates first node with batch poster disabled
-	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, true).WithTakeOwnership(false)
 	builder.nodeConfig.BatchPoster.Enable = false
 	cleanup := builder.Build(t)
 	defer cleanup()
@@ -575,6 +578,7 @@ func testBatchPosterDelayBuffer(t *testing.T, delayBufferEnabled bool) {
 			// If the delay buffer is disabled, set max delay to zero to force it
 			CheckBatchCount(t, builder, initialBatchCount+batch)
 			builder.nodeConfig.BatchPoster.MaxDelay = 0
+			builder.L2.ConsensusConfigFetcher.Set(builder.nodeConfig)
 		}
 		// Run batch poster loop again, this one should post a batch
 		_, err = builder.L2.ConsensusNode.BatchPoster.MaybePostSequencerBatch(ctx)
@@ -586,6 +590,7 @@ func testBatchPosterDelayBuffer(t *testing.T, delayBufferEnabled bool) {
 		CheckBatchCount(t, builder, initialBatchCount+batch+1)
 		if !delayBufferEnabled {
 			builder.nodeConfig.BatchPoster.MaxDelay = time.Hour
+			builder.L2.ConsensusConfigFetcher.Set(builder.nodeConfig)
 		}
 	}
 }
@@ -629,6 +634,7 @@ func TestBatchPosterDelayBufferDontForceNonDelayedMessages(t *testing.T) {
 	builder.L2.ConsensusNode.BatchPoster.StopAndWait() // allow us to modify config and call loop at will
 	// Set delay to zero to force non-delayed messages
 	builder.nodeConfig.BatchPoster.MaxDelay = 0
+	builder.L2.ConsensusConfigFetcher.Set(builder.nodeConfig)
 	_, err := builder.L2.ConsensusNode.BatchPoster.MaybePostSequencerBatch(ctx)
 	Require(t, err)
 	for _, tx := range txs {
@@ -679,7 +685,8 @@ func TestBatchPosterWithDelayProofsAndBacklog(t *testing.T) {
 	builder := NewNodeBuilder(ctx).
 		DefaultConfig(t, true).
 		WithDelayBuffer(threshold).
-		WithL1ClientWrapper(t)
+		WithL1ClientWrapper(t).
+		WithTakeOwnership(false)
 	cleanup := builder.Build(t)
 	defer cleanup()
 
@@ -772,11 +779,11 @@ func TestBatchPosterL1SurplusMatchesBatchGasFlaky(t *testing.T) {
 	Require(t, err)
 
 	// wait for this tx to be posted in a batch, and check which batch
-	var batchNum *big.Int
+	var batchNum uint64
 	for {
-		batch, err := builder.L2.ConsensusNode.FindInboxBatchContainingMessage(arbutil.MessageIndex(l2Block.NumberU64())).Await(ctx)
-		if err == nil && batch.Found {
-			batchNum = new(big.Int).SetUint64(batch.BatchNum)
+		var found bool
+		batchNum, found, err = builder.L2.ConsensusNode.InboxTracker.FindInboxBatchContainingMessage(arbutil.MessageIndex(l2Block.NumberU64()))
+		if err == nil && found {
 			break
 		}
 		t.Logf("waiting for tx to be posted in a batch")
@@ -788,7 +795,7 @@ func TestBatchPosterL1SurplusMatchesBatchGasFlaky(t *testing.T) {
 	Require(t, err)
 	var batchTxHash common.Hash
 	for {
-		it, err := seqInboxContract.FilterSequencerBatchDelivered(nil, []*big.Int{batchNum}, nil, nil)
+		it, err := seqInboxContract.FilterSequencerBatchDelivered(nil, []*big.Int{new(big.Int).SetUint64(batchNum)}, nil, nil)
 		if err == nil && it.Next() {
 			batchTxHash = it.Event.Raw.TxHash
 			break
@@ -819,7 +826,7 @@ func TestBatchPosterL1SurplusMatchesBatchGasFlaky(t *testing.T) {
 		block, err := builder.L2.Client.BlockByNumber(ctx, new(big.Int).SetUint64(b))
 		Require(t, err)
 		t.Logf("checking L2 block %d: nonce=%d (looking for %d)", b, block.Nonce(), batchNum)
-		if block.Nonce() == batchNum.Uint64()+1 {
+		if block.Nonce() == batchNum+1 {
 			foundBlock = block.Header().Number.Uint64()
 			break
 		}
@@ -846,4 +853,117 @@ func TestBatchPosterL1SurplusMatchesBatchGasFlaky(t *testing.T) {
 	t.Log("BATCH prices", "from-receipt", batchL1PostCost, "surplus-delta", delta)
 
 	checkPercentDiff(t, delta, batchL1PostCost, 0.1)
+}
+
+func TestBatchPosterActuallyPostsBlobsToL1(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	builder := NewNodeBuilder(ctx).DefaultConfig(t, true)
+	// Turn on unconditional blob posting
+	builder.nodeConfig.BatchPoster.Post4844Blobs = true
+	builder.nodeConfig.BatchPoster.IgnoreBlobPrice = true
+
+	// Build L1 + L2
+	cleanup := builder.Build(t)
+	defer cleanup()
+	// Create 2nd node to verify batch gets there
+	testClientB, cleanupB := builder.Build2ndNode(t, &SecondNodeParams{})
+	defer cleanupB()
+
+	// Post batch and record L1 heights before and after
+	l1HeightBeforeBatch, err := builder.L1.Client.BlockNumber(ctx)
+	require.NoError(t, err)
+
+	checkBatchPosting(t, ctx, builder, testClientB.Client)
+
+	l1HeightAfterBatch, err := builder.L1.Client.BlockNumber(ctx)
+	require.NoError(t, err)
+
+	// Look up the batches posted between the two L1 heights
+	seqInbox, err := arbnode.NewSequencerInbox(builder.L1.Client, builder.addresses.SequencerInbox, int64(l1HeightBeforeBatch)) // nolint: gosec
+	Require(t, err)
+	batches, err := seqInbox.LookupBatchesInRange(ctx, new(big.Int).SetUint64(l1HeightBeforeBatch), new(big.Int).SetUint64(l1HeightAfterBatch))
+	Require(t, err)
+	require.NotZero(t, len(batches), "no batches found between L1 blocks %d and %d", l1HeightBeforeBatch, l1HeightAfterBatch)
+
+	for _, batch := range batches {
+		sequenceNum := batch.SequenceNumber
+		sequencerMessageBytes, _, err := builder.L2.ConsensusNode.InboxReader.GetSequencerMessageBytes(ctx, sequenceNum)
+		Require(t, err)
+
+		blobVersionedHash := common.BytesToHash(sequencerMessageBytes[41:])
+
+		l1Block, err := builder.L1.Client.HeaderByNumber(ctx, big.NewInt(int64(batch.ParentChainBlockNumber))) // nolint: gosec
+		Require(t, err)
+		require.NotZero(t, l1Block.BlobGasUsed)
+
+		restoredBlobs, err := builder.L1.L1BlobReader.GetBlobs(ctx, l1Block.Hash(), []common.Hash{blobVersionedHash})
+		Require(t, err)
+		require.Len(t, restoredBlobs, 1)
+	}
+}
+
+func TestBatchPosterPostsReportOnlyBatchAfterMaxEmptyBatchDelay(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	builder := NewNodeBuilder(ctx).
+		DefaultConfig(t, true).
+		WithPreBoldDeployment().
+		TakeOwnership()
+
+	// Enable delayed sequencer and set fast finalization so reports appear quickly on L2
+	builder.nodeConfig.DelayedSequencer.Enable = true
+	builder.nodeConfig.DelayedSequencer.FinalizeDistance = 1
+	// Post an empty batch if no useful messages appear within 1 second.
+	builder.nodeConfig.BatchPoster.MaxEmptyBatchDelay = time.Second
+	// Use a very short non-zero max delay to trigger first batch immediately.
+	builder.nodeConfig.BatchPoster.MaxDelay = time.Millisecond
+	// Disable automatic background posting
+	builder.nodeConfig.BatchPoster.PollInterval = time.Hour
+
+	cleanup := builder.Build(t)
+	defer cleanup()
+
+	// Prevent background batchposter goroutine from racing our manual call.
+	builder.L2.ConsensusNode.BatchPoster.StopAndWait()
+
+	initialBatchCount := GetBatchCount(t, builder)
+
+	// Force immediate post of first batch.
+	posted, err := builder.L2.ConsensusNode.BatchPoster.MaybePostSequencerBatch(ctx)
+	require.NoError(t, err)
+	require.True(t, posted, "expected first batch to post immediately")
+
+	// Wait for batch to appear on L1
+	require.Eventually(t, func() bool {
+		return GetBatchCount(t, builder) == initialBatchCount+1
+	}, 3*time.Second, 100*time.Millisecond, "timeout waiting for first batch to appear on L1")
+
+	// Force second batch, should not post yet as MaxEmptyBatchDelay hasn't elapsed
+	posted, err = builder.L2.ConsensusNode.BatchPoster.MaybePostSequencerBatch(ctx)
+	require.NoError(t, err)
+	require.False(t, posted, "expected second batch to not post yet")
+
+	// Spin L1 to get batch poster report
+	AdvanceL1(t, ctx, builder.L1.Client, builder.L1Info, 1)
+
+	// The batch posting report's timestamp comes from the L1 block that included it.
+	// In the simulated beacon, block timestamps can race far ahead of wall clock
+	// (each block gets lastBlockTime+1 when blocks are mined faster than 1/second).
+	// We need wall clock to pass the report's L1 timestamp + MaxEmptyBatchDelay
+	// before the batch poster will consider the report old enough to trigger posting.
+	latestHeader, err := builder.L1.Client.HeaderByNumber(ctx, nil)
+	require.NoError(t, err)
+	l1AheadBy := time.Until(time.Unix(int64(latestHeader.Time), 0)) //#nosec G115
+	if l1AheadBy > 0 {
+		time.Sleep(l1AheadBy)
+	}
+	time.Sleep(builder.nodeConfig.BatchPoster.MaxEmptyBatchDelay)
+
+	// Force second batch, posting should be triggered by MaxEmptyBatchDelay
+	posted, err = builder.L2.ConsensusNode.BatchPoster.MaybePostSequencerBatch(ctx)
+	require.NoError(t, err)
+	require.True(t, posted, "expected second batch to be posted by MaxEmptyBatchDelay")
 }

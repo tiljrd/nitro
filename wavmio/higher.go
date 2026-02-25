@@ -1,8 +1,7 @@
-// Copyright 2021-2024, Offchain Labs, Inc.
+// Copyright 2021-2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 //go:build wasm
-// +build wasm
 
 package wavmio
 
@@ -41,9 +40,13 @@ func readBuffer(f func(uint32, unsafe.Pointer) uint32) []byte {
 	}
 }
 
-func StubInit() {}
+func OnInit() {}
 
-func StubFinal() {}
+func OnReady() {
+	beforeFirstIO()
+}
+
+func OnFinal() {}
 
 func GetLastBlockHash() (hash common.Hash) {
 	hashUnsafe := unsafe.Pointer(&hash[0])

@@ -1,4 +1,4 @@
-// Copyright 2023-2024, Offchain Labs, Inc.
+// Copyright 2023-2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 package programs
@@ -100,8 +100,12 @@ func newApiClosures(
 			multiGas.SaturatingAddInto(costMultiGas)
 			db.SetState(actingAddress, key, value)
 		}
-		if isOutOfGas {
-			return OutOfGas
+		if isOutOfGas || *gasLeft == 0 {
+			if evm.Context.ArbOSVersion < 50 {
+				return Failure
+			} else {
+				return OutOfGas
+			}
 		}
 		scope.Contract.UsedMultiGas.SaturatingAddInto(multiGas)
 		return Success

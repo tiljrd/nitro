@@ -1,4 +1,4 @@
-// Copyright 2021-2022, Offchain Labs, Inc.
+// Copyright 2021-2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 package broadcastclients
@@ -108,7 +108,7 @@ func NewBroadcastClients(
 		clients.primaryClients = append(clients.primaryClients, client)
 	}
 	if len(clients.primaryClients) == 0 {
-		log.Error("no connected feed on startup, last error: %w", lastClientErr)
+		log.Error("no connected feed on startup", "err", lastClientErr)
 		return nil, nil
 	}
 

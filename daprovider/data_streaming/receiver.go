@@ -1,4 +1,4 @@
-// Copyright 2025, Offchain Labs, Inc.
+// Copyright 2025-2026, Offchain Labs, Inc.
 // For license information, see https://github.com/OffchainLabs/nitro/blob/master/LICENSE.md
 
 package data_streaming
@@ -86,7 +86,7 @@ func NewDefaultDataStreamReceiver(verifier *PayloadVerifier) *DataStreamReceiver
 // StartStreamingResult is expected by DataStreamer to be returned by the endpoint responsible for the StartReceiving method.
 // lint:require-exhaustive-initialization
 type StartStreamingResult struct {
-	MessageId hexutil.Uint64 `json:"MessageId,omitempty"`
+	MessageId hexutil.Uint64 `json:"BatchId,omitempty"` // For compatibility reasons we keep the old name "BatchId"
 }
 
 func (dsr *DataStreamReceiver) StartReceiving(ctx context.Context, timestamp, nChunks, chunkSize, totalSize, timeout uint64, signature []byte) (*StartStreamingResult, error) {
